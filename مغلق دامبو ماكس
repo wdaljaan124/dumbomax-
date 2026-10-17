@@ -1,0 +1,223 @@
+name: dumbomax
+description: نظام مغلق دامبو ماكس للمبيعات والمخازن
+publish_to: 'none'
+version: 1.0.0+1
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  intl: ^0.19.0
+  sqflite: ^2.3.0
+  path: ^1.9.0
+  crypto: ^3.0.3
+  shared_preferences: ^2.2.2
+  pdf: ^3.10.0
+  printing: ^5.12.0
+  share_plus: ^7.2.1
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+flutter:
+  uses-material-design: true
+import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'database_helper.dart';
+import 'login_screen.dart';
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final db = await DatabaseHelper.instance.database;
+  final users = await db.query('users');
+  if (users.isEmpty) {
+    await db.insert('users', {'username': 'admin','password': 'admin123','role': 'admin'});
+  }
+  runApp(const DumboMaxApp());
+}
+class DumboMaxApp extends StatelessWidget {
+  const DumboMaxApp({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'مغلق دامبو ماكس',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(useMaterial3: true, colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF00897B))),
+      localizationsDelegates: const [GlobalMaterialLocalizations.delegate, GlobalWidgetsLocalizations.delegate, GlobalCupertinoLocalizations.delegate],
+      supportedLocales: const [Locale('ar','SA'), Locale('en','US')],
+      locale: const Locale('ar','SA'),
+      home: const LoginScreen(),
+    );
+  }
+}
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart';
+class DatabaseHelper {
+  static final DatabaseHelper instance = DatabaseHelper._();
+  static Database? _db;
+  DatabaseHelper._();
+  Future<Database> get database async { _db ??= await _initDB(); return _db!; }
+  Future<Database> _initDB() async {
+    String path = join(await getDatabasesPath(), 'dumbomax.db');
+    return await openDatabase(path, version: 2, onCreate: _createTables);
+  }
+  Future<void> _createTables(Database db, int v) async {
+    await db.execute('CREATE TABLE users(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, role TEXT DEFAULT "user")');
+    await db.execute('CREATE TABLE items(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, barcode TEXT, name TEXT, buy_price REAL, sell_price REAL, buy_price_usd REAL DEFAULT 0, sell_price_usd REAL DEFAULT 0, wholesale_qty REAL DEFAULT 0, wholesale_price REAL DEFAULT 0, quantity REAL DEFAULT 0, min_qty REAL DEFAULT 0, warehouse_id INTEGER, category TEXT)');
+    await db.execute('CREATE TABLE warehouses(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, location TEXT, manager TEXT)');
+    await db.execute('CREATE TABLE suppliers(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, phone TEXT, address TEXT, balance REAL DEFAULT 0)');
+    await db.execute('CREATE TABLE sales(id INTEGER PRIMARY KEY AUTOINCREMENT, invoice_no TEXT, date TEXT, customer TEXT, total REAL, discount REAL, tax REAL, net REAL, payment_type TEXT DEFAULT "cash", paid REAL DEFAULT 0, type TEXT DEFAULT "sale")');
+    await db.execute('CREATE TABLE sale_items(id INTEGER PRIMARY KEY AUTOINCREMENT, sale_id INTEGER, item_id INTEGER, qty REAL, price REAL, total REAL)');
+    await db.execute('CREATE TABLE purchases(id INTEGER PRIMARY KEY AUTOINCREMENT, invoice_no TEXT, date TEXT, supplier_id INTEGER, total REAL, net REAL, type TEXT DEFAULT "purchase")');
+    await db.execute('CREATE TABLE purchase_items(id INTEGER PRIMARY KEY AUTOINCREMENT, purchase_id INTEGER, item_id INTEGER, qty REAL, price REAL, total REAL)');
+    await db.execute('CREATE TABLE proforma(id INTEGER PRIMARY KEY AUTOINCREMENT, invoice_no TEXT, date TEXT, customer TEXT, total REAL, net REAL, status TEXT DEFAULT "pending")');
+    await db.execute('CREATE TABLE journal(id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, account TEXT, debit REAL, credit REAL, note TEXT)');
+    await db.execute('CREATE TABLE accounts(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, type TEXT, balance REAL DEFAULT 0)');
+    await db.execute('CREATE TABLE employees(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, phone TEXT, salary REAL DEFAULT 0, advance REAL DEFAULT 0)');
+    await db.execute('CREATE TABLE expenses(id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, title TEXT, amount REAL, type TEXT)');
+    await db.execute('CREATE TABLE cheques(id INTEGER PRIMARY KEY AUTOINCREMENT, number TEXT, type TEXT, amount REAL, due_date TEXT, status TEXT DEFAULT "pending", customer TEXT)');
+    await db.execute('CREATE TABLE payments(id INTEGER PRIMARY KEY AUTOINCREMENT, sale_id INTEGER, customer TEXT, amount REAL, date TEXT, note TEXT)');
+  }
+  Future<void> updateByUsd(double rate) async {
+    final db = await database;
+    await db.rawUpdate('UPDATE items SET sell_price = sell_price_usd * ?, buy_price = buy_price_usd * ?', [rate, rate]);
+  }
+  Future<void> updateByPercent(double percent, bool increase) async {
+    final db = await database;
+    double f = increase ? (1 + percent/100) : (1 - percent/100);
+    await db.rawUpdate('UPDATE items SET sell_price = sell_price * ?, buy_price = buy_price * ?', [f, f]);
+  }
+}
+import 'package:flutter/material.dart';
+import 'database_helper.dart';
+import 'dashboard_screen.dart';
+class LoginScreen extends StatefulWidget { const LoginScreen({super.key}); @override State<LoginScreen> createState() => _LoginScreenState(); }
+class _LoginScreenState extends State<LoginScreen> {
+  final _u = TextEditingController(text: 'admin'); final _p = TextEditingController(text: 'admin123');
+  @override Widget build(BuildContext context) => Scaffold(body: Padding(padding: const EdgeInsets.all(24), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+    const Text('مغلق دامبو ماكس', style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold, color: Color(0xFF00897B))),
+    const Text('0912407153 - 0123407153', style: TextStyle(fontSize: 14)),
+    const SizedBox(height: 20),
+    TextField(controller: _u, decoration: const InputDecoration(labelText: 'اسم المستخدم', border: OutlineInputBorder())),
+    const SizedBox(height: 12),
+    TextField(controller: _p, obscureText: true, decoration: const InputDecoration(labelText: 'كلمة السر', border: OutlineInputBorder())),
+    const SizedBox(height: 20),
+    ElevatedButton(onPressed: () async {
+      final db = await DatabaseHelper.instance.database;
+      final res = await db.query('users', where: 'username=? AND password=?', whereArgs: [_u.text, _p.text]);
+      if (res.isNotEmpty) { Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => DashboardScreen(role: res.first['role'].toString()))); }
+      else { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('خطأ في الدخول'))); }
+    }, child: const Text('دخول')),
+  ])));
+}
+import 'package:flutter/material.dart';
+import 'items_screen.dart'; import 'sales_screen.dart'; import 'suppliers_screen.dart'; import 'purchases_screen.dart'; import 'reports_screen.dart'; import 'price_update_screen.dart'; import 'cheques_screen.dart'; import 'employees_screen.dart'; import 'login_screen.dart';
+class DashboardScreen extends StatelessWidget { final String role; const DashboardScreen({super.key, this.role='admin'}); @override Widget build(BuildContext context){ final items=[{'t':'المبيعات','i':Icons.shopping_cart,'w':const SalesScreen()},{'t':'الأصناف','i':Icons.inventory,'w':const ItemsScreen()},{'t':'المشتريات','i':Icons.shopping_bag,'w':const PurchasesScreen()},{'t':'الموردون','i':Icons.people,'w':const SuppliersScreen()},{'t':'تحديث الأسعار','i':Icons.attach_money,'w':const PriceUpdateScreen()},{'t':'الشيكات','i':Icons.receipt,'w':const ChequesScreen()},{'t':'الموظفين','i':Icons.badge,'w':const EmployeesScreen()},{'t':'التقارير','i':Icons.bar_chart,'w':const ReportsScreen()}]; return Scaffold(appBar: AppBar(title: const Text('مغلق دامبو ماكس'), actions: [IconButton(icon: const Icon(Icons.logout), onPressed: ()=>Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_)=>const LoginScreen()), (r)=>false))]), body: GridView.count(crossAxisCount: 2, padding: const EdgeInsets.all(16), children: items.map((s)=>Card(child: InkWell(onTap: ()=>Navigator.push(context, MaterialPageRoute(builder: (_)=>s['w'] as Widget)), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(s['i'] as IconData, size:48, color: const Color(0xFF00897B)), const SizedBox(height:10), Text(s['t'] as String, style: const TextStyle(fontSize:17))])))).toList())); }}
+import 'package:flutter/material.dart';
+import 'database_helper.dart';
+class ItemsScreen extends StatefulWidget { const ItemsScreen({super.key}); @override State<ItemsScreen> createState() => _ItemsScreenState(); }
+class _ItemsScreenState extends State<ItemsScreen> {
+  List<Map<String,dynamic>> _list=[]; @override void initState(){super.initState(); _load();}
+  Future<void> _load() async { final db=await DatabaseHelper.instance.database; _list = await db.query('items'); setState((){}); }
+  @override Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: const Text('الأصناف - مغلق دامبو ماكس')), floatingActionButton: FloatingActionButton(onPressed: _add, child: const Icon(Icons.add)), body: ListView.builder(itemCount: _list.length, itemBuilder: (c,i)=>Card(child: ListTile(title: Text(_list[i]['name']??''), subtitle: Text('بيع: ${_list[i]['sell_price']} | شراء: ${_list[i]['buy_price']} | كمية: ${_list[i]['quantity']}')))));
+  Future<void> _add() async { final n=TextEditingController(); final b=TextEditingController(); final s=TextEditingController(); final q=TextEditingController(); final bu=TextEditingController(); final su=TextEditingController(); await showDialog(context: context, builder:(ctx)=>AlertDialog(title: const Text('صنف جديد'), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [TextField(controller: n, decoration: const InputDecoration(labelText:'الاسم')), TextField(controller: b, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText:'سعر الشراء جنيه')), TextField(controller: s, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText:'سعر البيع جنيه')), TextField(controller: q, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText:'الكمية')), TextField(controller: bu, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText:'سعر الشراء بالدولار')), TextField(controller: su, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText:'سعر البيع بالدولار'))])), actions: [ElevatedButton(onPressed: () async { final db=await DatabaseHelper.instance.database; await db.insert('items', {'name':n.text,'buy_price':double.tryParse(b.text)??0,'sell_price':double.tryParse(s.text)??0,'quantity':double.tryParse(q.text)??0,'buy_price_usd':double.tryParse(bu.text)??0,'sell_price_usd':double.tryParse(su.text)??0}); if(ctx.mounted) Navigator.pop(ctx); _load(); }, child: const Text('حفظ'))])); }
+}
+import 'package:flutter/material.dart';
+import 'database_helper.dart';
+class SalesScreen extends StatefulWidget { const SalesScreen({super.key}); @override State<SalesScreen> createState() => _SalesScreenState(); }
+class _SalesScreenState extends State<SalesScreen> {
+  List<Map<String,dynamic>> _list=[]; @override void initState(){super.initState(); _load();}
+  Future<void> _load() async { final db=await DatabaseHelper.instance.database; _list = await db.query('sales', orderBy: 'id DESC'); setState((){}); }
+  @override Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: const Text('المبيعات - مغلق دامبو ماكس')), floatingActionButton: FloatingActionButton(onPressed: _add, child: const Icon(Icons.add)), body: ListView.builder(itemCount: _list.length, itemBuilder: (c,i)=>Card(child: ListTile(title: Text('فاتورة ${_list[i]['invoice_no']} - ${_list[i]['customer']}'), subtitle: Text('الصافي: ${_list[i]['net']} | التاريخ: ${_list[i]['date']}')))));
+  Future<void> _add() async { final cust=TextEditingController(); final total=TextEditingController(); await showDialog(context: context, builder:(ctx)=>AlertDialog(title: const Text('بيع جديد'), content: Column(mainAxisSize: MainAxisSize.min, children: [TextField(controller: cust, decoration: const InputDecoration(labelText:'العميل')), TextField(controller: total, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText:'المبلغ'))]), actions: [ElevatedButton(onPressed: () async { final db=await DatabaseHelper.instance.database; await db.insert('sales', {'invoice_no': 'INV-${DateTime.now().millisecondsSinceEpoch}', 'date': DateTime.now().toIso8601String().substring(0,10), 'customer': cust.text, 'total': double.tryParse(total.text)??0, 'net': double.tryParse(total.text)??0, 'paid': double.tryParse(total.text)??0}); if(ctx.mounted) Navigator.pop(ctx); _load(); }, child: const Text('حفظ'))])); }
+}
+import 'package:flutter/material.dart';
+import 'database_helper.dart';
+class SuppliersScreen extends StatefulWidget { const SuppliersScreen({super.key}); @override State<SuppliersScreen> createState() => _SuppliersScreenState(); }
+class _SuppliersScreenState extends State<SuppliersScreen> {
+  List<Map<String,dynamic>> _list=[]; @override void initState(){super.initState(); _load();}
+  Future<void> _load() async { final db=await DatabaseHelper.instance.database; _list = await db.query('suppliers'); setState((){}); }
+  @override Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: const Text('الموردون - مغلق دامبو ماكس')), floatingActionButton: FloatingActionButton(onPressed: _add, child: const Icon(Icons.add)), body: ListView.builder(itemCount: _list.length, itemBuilder: (c,i)=>Card(child: ListTile(title: Text(_list[i]['name']??''), subtitle: Text('${_list[i]['phone']} | الرصيد: ${_list[i]['balance']}')))));
+  Future<void> _add() async { final n=TextEditingController(); final p=TextEditingController(); await showDialog(context: context, builder:(ctx)=>AlertDialog(title: const Text('مورد جديد'), content: Column(mainAxisSize: MainAxisSize.min, children: [TextField(controller: n, decoration: const InputDecoration(labelText:'الاسم')), TextField(controller: p, decoration: const InputDecoration(labelText:'الهاتف'))]), actions: [ElevatedButton(onPressed: () async { final db=await DatabaseHelper.instance.database; await db.insert('suppliers', {'name':n.text,'phone':p.text}); if(ctx.mounted) Navigator.pop(ctx); _load(); }, child: const Text('حفظ'))])); }
+}
+import 'package:flutter/material.dart';
+import 'database_helper.dart';
+class PurchasesScreen extends StatefulWidget { const PurchasesScreen({super.key}); @override State<PurchasesScreen> createState() => _PurchasesScreenState(); }
+class _PurchasesScreenState extends State<PurchasesScreen> {
+  List<Map<String,dynamic>> _list=[]; @override void initState(){super.initState(); _load();}
+  Future<void> _load() async { final db=await DatabaseHelper.instance.database; _list = await db.query('purchases', orderBy: 'id DESC'); setState((){}); }
+  @override Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: const Text('المشتريات - مغلق دامبو ماكس')), floatingActionButton: FloatingActionButton(onPressed: _add, child: const Icon(Icons.add)), body: ListView.builder(itemCount: _list.length, itemBuilder: (c,i)=>Card(child: ListTile(title: Text('فاتورة ${_list[i]['invoice_no']}'), subtitle: Text('الصافي: ${_list[i]['net']} | ${_list[i]['date']}')))));
+  Future<void> _add() async { final total=TextEditingController(); await showDialog(context: context, builder:(ctx)=>AlertDialog(title: const Text('شراء جديد'), content: TextField(controller: total, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText:'المبلغ')), actions: [ElevatedButton(onPressed: () async { final db=await DatabaseHelper.instance.database; await db.insert('purchases', {'invoice_no': 'PUR-${DateTime.now().millisecondsSinceEpoch}', 'date': DateTime.now().toIso8601String().substring(0,10), 'total': double.tryParse(total.text)??0, 'net': double.tryParse(total.text)??0}); if(ctx.mounted) Navigator.pop(ctx); _load(); }, child: const Text('حفظ'))])); }
+}
+import 'package:flutter/material.dart';
+import 'database_helper.dart';
+class ReportsScreen extends StatefulWidget { const ReportsScreen({super.key}); @override State<ReportsScreen> createState() => _ReportsScreenState(); }
+class _ReportsScreenState extends State<ReportsScreen> {
+  double _sales=0, _purchases=0; @override void initState(){super.initState(); _load();}
+  Future<void> _load() async { final db=await DatabaseHelper.instance.database; final s=await db.rawQuery('SELECT SUM(net) as t FROM sales'); final p=await db.rawQuery('SELECT SUM(net) as t FROM purchases'); setState((){ _sales=(s.first['t'] as num?)?.toDouble()??0; _purchases=(p.first['t'] as num?)?.toDouble()??0; }); }
+  @override Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: const Text('التقارير - مغلق دامبو ماكس')), body: Padding(padding: const EdgeInsets.all(16), child: Column(children: [Card(child: ListTile(title: const Text('اجمالي المبيعات'), subtitle: Text('$_sales جنيه'))), Card(child: ListTile(title: const Text('اجمالي المشتريات'), subtitle: Text('$_purchases جنيه'))), Card(child: ListTile(title: const Text('صافي الربح التقريبي'), subtitle: Text('${_sales - _purchases} جنيه'))), const SizedBox(height:20), const Text('بنكك: محمد بدوي - 2202823 | أوكاش: 1789703', textAlign: TextAlign.center)])));
+}
+import 'package:flutter/material.dart';
+import 'database_helper.dart';
+class PriceUpdateScreen extends StatefulWidget { const PriceUpdateScreen({super.key}); @override State<PriceUpdateScreen> createState() => _PriceUpdateScreenState(); }
+class _PriceUpdateScreenState extends State<PriceUpdateScreen> {
+  final _usd = TextEditingController(); final _percent = TextEditingController(); bool _inc = true;
+  @override Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: const Text('تحديث الأسعار')), body: Padding(padding: const EdgeInsets.all(16), child: Column(children: [
+    TextField(controller: _usd, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'سعر الدولار اليوم', border: OutlineInputBorder())),
+    const SizedBox(height: 12),
+    ElevatedButton(onPressed: () async { await DatabaseHelper.instance.updateByUsd(double.tryParse(_usd.text)??0); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم تحديث الأسعار بالدولار ✅'))); }, child: const Text('تحديث بالدولار')),
+    const Divider(height: 30),
+    TextField(controller: _percent, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'النسبة المئوية %', border: OutlineInputBorder())),
+    Row(children: [Expanded(child: RadioListTile(value: true, groupValue: _inc, onChanged: (v)=>setState(()=>_inc=v!), title: const Text('زيادة'))), Expanded(child: RadioListTile(value: false, groupValue: _inc, onChanged: (v)=>setState(()=>_inc=v!), title: const Text('تخفيض')))]),
+    ElevatedButton(onPressed: () async { await DatabaseHelper.instance.updateByPercent(double.tryParse(_percent.text)??0, _inc); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم تحديث الأسعار بنسبة مئوية ✅'))); }, child: const Text('تحديث بنسبة مئوية')),
+  ])));
+}
+import 'package:flutter/material.dart';
+import 'database_helper.dart';
+class ChequesScreen extends StatefulWidget { const ChequesScreen({super.key}); @override State<ChequesScreen> createState() => _ChequesScreenState(); }
+class _ChequesScreenState extends State<ChequesScreen> {
+  List<Map<String,dynamic>> _list=[]; @override void initState(){super.initState(); _load();}
+  Future<void> _load() async { final db=await DatabaseHelper.instance.database; _list = await db.query('cheques', orderBy: 'due_date ASC'); setState((){}); }
+  @override Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: const Text('الشيكات - مغلق دامبو ماكس')), floatingActionButton: FloatingActionButton(onPressed: _add, child: const Icon(Icons.add)), body: ListView.builder(itemCount: _list.length, itemBuilder: (c,i){ final it=_list[i]; return Card(child: ListTile(title: Text('شيك ${it['number']} - ${it['customer']}'), subtitle: Text('المبلغ: ${it['amount']} | الاستحقاق: ${it['due_date']} | ${it['status']}'))); }));
+  Future<void> _add() async { final numC=TextEditingController(); final amt=TextEditingController(); final cust=TextEditingController(); final date=TextEditingController(text: DateTime.now().toIso8601String().substring(0,10)); await showDialog(context: context, builder:(ctx)=>AlertDialog(title: const Text('شيك جديد'), content: Column(mainAxisSize: MainAxisSize.min, children: [TextField(controller: numC, decoration: const InputDecoration(labelText:'رقم الشيك')), TextField(controller: cust, decoration: const InputDecoration(labelText:'العميل')), TextField(controller: amt, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText:'المبلغ')), TextField(controller: date, decoration: const InputDecoration(labelText:'تاريخ الاستحقاق YYYY-MM-DD'))]), actions: [ElevatedButton(onPressed: () async { final db=await DatabaseHelper.instance.database; await db.insert('cheques', {'number':numC.text,'customer':cust.text,'amount':double.tryParse(amt.text)??0,'due_date':date.text,'type':'وارد','status':'pending'}); if(ctx.mounted) Navigator.pop(ctx); _load(); }, child: const Text('حفظ'))])); }
+}
+import 'package:flutter/material.dart';
+import 'database_helper.dart';
+class EmployeesScreen extends StatefulWidget { const EmployeesScreen({super.key}); @override State<EmployeesScreen> createState() => _EmployeesScreenState(); }
+class _EmployeesScreenState extends State<EmployeesScreen> {
+  List<Map<String,dynamic>> _list=[]; @override void initState(){super.initState(); _load();}
+  Future<void> _load() async { final db=await DatabaseHelper.instance.database; _list = await db.query('employees'); setState((){}); }
+  Future<void> _add() async { final n=TextEditingController(); final p=TextEditingController(); final s=TextEditingController(); await showDialog(context: context, builder:(ctx)=>AlertDialog(title: const Text('موظف جديد'), content: Column(mainAxisSize: MainAxisSize.min, children: [TextField(controller: n, decoration: const InputDecoration(labelText:'الاسم')), TextField(controller: p, decoration: const InputDecoration(labelText:'الهاتف')), TextField(controller: s, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText:'المرتب'))]), actions: [ElevatedButton(onPressed: () async { final db=await DatabaseHelper.instance.database; await db.insert('employees', {'name':n.text,'phone':p.text,'salary':double.tryParse(s.text)??0}); if(ctx.mounted) Navigator.pop(ctx); _load(); }, child: const Text('حفظ'))])); }
+  @override Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: const Text('الموظفين - مغلق دامبو ماكس')), floatingActionButton: FloatingActionButton(onPressed: _add, child: const Icon(Icons.add)), body: ListView.builder(itemCount: _list.length, itemBuilder: (c,i)=>Card(child: ListTile(title: Text(_list[i]['name']??''), subtitle: Text('مرتب: ${_list[i]['salary']} | سلفية: ${_list[i]['advance']} | ${_list[i]['phone']}')))));
+}
+import 'package:pdf/widgets.dart' as pw;
+class InvoiceTemplate {
+  static pw.Widget header() => pw.Column(children: [
+    pw.Text('مغلق دامبو ماكس', style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold)),
+    pw.Text('نظام إدارة المبيعات والمخازن - DumboMax', style: pw.TextStyle(fontSize: 13)),
+    pw.Text('تلفونات: 0912407153 - 0123407153', style: pw.TextStyle(fontSize: 12)),
+    pw.Text('بنكك: محمد بدوي - 2202823 | أوكاش: 1789703', style: pw.TextStyle(fontSize: 12)),
+    pw.Divider(),
+  ]);
+}
+name: Build DumboMax APK
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0'
+          channel: 'stable'
+      - run: flutter pub get
+      - run: flutter build apk --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dumbomax-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
