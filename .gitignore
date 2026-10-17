@@ -1,35 +1,122 @@
-# Gradle files
-.gradle/
-build/
-.kotlin/
+# name: DumboMax APK Build
 
-# Local configuration file (sdk path, etc)
-local.properties
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
 
-# Log/OS Files
-*.log
+permissions:
+  contents: read
 
-# Android Studio generated files and folders
-captures/
-.externalNativeBuild/
-.cxx/
-*.aab
-*.apk
-output-metadata.json
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
 
-# IntelliJ
-*.iml
-.idea/
-misc.xml
-deploymentTargetDropDown.xml
-render.experimental.xml
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-# Keystore files
-*.jks
-*.keystore
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
-# Google Services (e.g. APIs or Firebase)
-google-services.json
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
 
-# Android Profiling
-*.hprof
+      - name: Print Flutter/Dart versions
+        run: |
+          flutter --version
+          dart --version
+
+      - name: Find Flutter project dir
+        id: find_project
+        shell: bash
+        run: |
+          PROJECT_DIR=""
+          while IFS= read -r -d '' f; do
+            dir=$(dirname "$f")
+            # prefer directories that contain android/app/build.gradle (real app)
+            if [ -f "$dir/android/app/build.gradle" ]; then
+              PROJECT_DIR="$dir"
+              break
+            fi
+            # otherwise pick first pubspec.yaml as fallback
+            if [ -z "$PROJECT_DIR" ]; then
+              PROJECT_DIR="$dir"
+            fi
+          done < <(find . -name pubspec.yaml -not -path '*/.dart_tool/*' -not -path '*/build/*' -print0)
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ERROR: No pubspec.yaml found. Not a Flutter project?"
+            exit 1
+          fi
+
+          echo "Found Flutter project in: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "::set-output name=project_dir::$PROJECT_DIR"
+
+      - name: Debug: list project contents
+        if: always()
+        run: |
+          echo "PROJECT_DIR=${{ env.PROJECT_DIR }}"
+          ls -la "${{ env.PROJECT_DIR }}"
+          echo "--- check android module ---"
+          if [ -f "${{ env.PROJECT_DIR }}/android/app/build.gradle" ]; then
+            echo "FOUND: android/app/build.gradle"
+          else
+            echo "MISSING: android/app/build.gradle (will generate temporarily on runner)"
+          fi
+
+      - name: Install dependencies (initial)
+        run: |
+          cd "${{ env.PROJECT_DIR }}"
+          flutter pub get
+        working-directory: ${{ env.PROJECT_DIR }}
+
+      - name: Ensure Android platform exists (runner-only)
+        run: |
+          # If android module missing, generate it locally in the runner workspace only.
+          if [ ! -f "${{ env.PROJECT_DIR }}/android/app/build.gradle" ]; then
+            echo "Android module not found — generating Android platform in runner workspace (won't modify repo)"
+            # flutter create will add platform files; safe because we are inside runner workspace
+            flutter create --platforms=android "${{ env.PROJECT_DIR }}"
+            cd "${{ env.PROJECT_DIR }}"
+            flutter pub get
+          else
+            echo "Android module already present — skipping generation"
+          fi
+        working-directory: ${{ env.PROJECT_DIR }}
+
+      - name: Build APK
+        run: |
+          cd "${{ env.PROJECT_DIR }}"
+          flutter build apk --debug --no-shrink
+        working-directory: ${{ env.PROJECT_DIR }}
+
+      - name: Prepare APK
+        run: |
+          APK_SRC="${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-debug.apk"
+          APK_DST="${GITHUB_WORKSPACE}/DumboMax.apk"
+          if [ ! -f "$APK_SRC" ]; then
+            echo "ERROR: APK not found at $APK_SRC"
+            ls -R "${{ env.PROJECT_DIR }}/build" || true
+            exit 1
+          fi
+          cp "$APK_SRC" "$APK_DST"
+          echo "APK copied to $APK_DST"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DumboMax-APK
+          path: DumboMax.apk
+          if-no-files-found: error
